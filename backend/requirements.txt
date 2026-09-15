@@ -1,0 +1,24 @@
+# Web framework
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+
+# Base de données async
+sqlalchemy==2.0.36
+aiosqlite==0.20.0        # SQLite async (dev)
+asyncpg==0.30.0          # PostgreSQL async (prod)
+alembic==1.14.0          # Migrations BDD
+
+# Validation
+pydantic==2.10.3
+pydantic-settings==2.7.0
+
+# Cryptographie
+cryptography==44.0.0     # AES-256-GCM
+bcrypt==4.2.1            # Hachage de mots de passe
+python-jose[cryptography]==3.3.0  # JWT
+
+# Upload de fichiers
+python-multipart==0.0.20
+
+# Rate limiting
+slowapi==0.1.9

@@ -1,22 +1,25 @@
-import { Lock, Film, FileText, Image, Clock, Settings, LogOut } from 'lucide-react'
+import { Lock, Film, FileText, Image, Clock, LogOut } from 'lucide-react'
 import clsx from 'clsx'
 import { useAuth } from '@/hooks/useAuth'
+import { useSettingsCtx } from '@/context/SettingsContext'
 import type { MediaType } from '@/types'
 
 interface SidebarProps {
   activeFilter: MediaType | null
   onFilterChange: (filter: MediaType | null) => void
+  onOpenSettings: () => void
 }
 
-const NAV_ITEMS = [
-  { label: 'Tout', value: null, icon: Lock },
-  { label: 'Vidéos', value: 'video' as MediaType, icon: Film },
-  { label: 'Documents', value: 'document' as MediaType, icon: FileText },
-  { label: 'Scans', value: 'scan' as MediaType, icon: Image },
-]
-
-export default function Sidebar({ activeFilter, onFilterChange }: SidebarProps) {
+export default function Sidebar({ activeFilter, onFilterChange, onOpenSettings }: SidebarProps) {
   const { user, logout } = useAuth()
+  const { t } = useSettingsCtx()
+
+  const NAV_ITEMS = [
+    { label: t('nav_library'), value: null, icon: Lock },
+    { label: t('nav_videos'), value: 'video' as MediaType, icon: Film },
+    { label: t('nav_documents'), value: 'document' as MediaType, icon: FileText },
+    { label: t('nav_scans'), value: 'scan' as MediaType, icon: Image },
+  ]
 
   return (
     <aside className="flex h-full w-48 flex-col border-r border-vault-border bg-vault-surface">
@@ -28,10 +31,10 @@ export default function Sidebar({ activeFilter, onFilterChange }: SidebarProps) 
         <span className="text-sm font-semibold text-vault-text">VideoVault</span>
       </div>
 
-      {/* Navigation principale */}
+      {/* Navigation */}
       <nav className="flex flex-col gap-0.5 p-2 pt-3">
         <span className="mb-1 px-2 text-[10px] uppercase tracking-widest text-vault-dim">
-          Médiathèque
+          {t('nav_library')}
         </span>
         {NAV_ITEMS.map(({ label, value, icon: Icon }) => (
           <button
@@ -55,39 +58,44 @@ export default function Sidebar({ activeFilter, onFilterChange }: SidebarProps) 
         <div className="my-2 h-px bg-vault-border" />
 
         <span className="mb-1 px-2 text-[10px] uppercase tracking-widest text-vault-dim">
-          Accès
+          {t('nav_access')}
         </span>
         <button className="flex items-center gap-2.5 rounded-md px-3 py-2 text-left text-xs font-medium text-vault-muted hover:bg-vault-hover hover:text-vault-text transition-colors">
           <Clock size={14} className="text-vault-dim" />
-          Récents
+          {t('nav_recent')}
         </button>
       </nav>
 
-      {/* Pied de sidebar : utilisateur + actions */}
+      {/* User section */}
       <div className="mt-auto p-2">
         <div className="rounded-lg border border-vault-border bg-vault-card p-2.5">
-          <div className="flex items-center gap-2">
+          {/* Click on avatar/username → settings */}
+          <button
+            onClick={onOpenSettings}
+            className="flex w-full items-center gap-2 rounded-md p-1 hover:bg-vault-hover transition-colors"
+            title={t('nav_settings')}
+          >
             <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-vault-accent/10 border border-vault-accent/20">
               <span className="font-mono text-[10px] font-semibold text-vault-accent">
                 {user?.username.slice(0, 2).toUpperCase()}
               </span>
             </div>
-            <div className="min-w-0 flex-1">
+            <div className="min-w-0 flex-1 text-left">
               <div className="truncate text-xs font-medium text-vault-text">{user?.username}</div>
-              <div className="font-mono text-[10px] text-vault-dim">{user?.is_admin ? 'admin' : 'user'}</div>
+              <div className="font-mono text-[10px] text-vault-dim">
+                {user?.is_admin ? 'admin' : 'user'} · {t('nav_settings')}
+              </div>
             </div>
-          </div>
-          <div className="mt-2 flex gap-1">
-            <button className="flex flex-1 items-center justify-center gap-1 rounded-md py-1.5 text-[11px] text-vault-muted hover:bg-vault-hover hover:text-vault-text transition-colors">
-              <Settings size={11} />
-              Params
-            </button>
+          </button>
+
+          {/* Logout only */}
+          <div className="mt-1.5">
             <button
               onClick={logout}
-              className="flex flex-1 items-center justify-center gap-1 rounded-md py-1.5 text-[11px] text-vault-muted hover:bg-vault-hover hover:text-red-400 transition-colors"
+              className="flex w-full items-center justify-center gap-1.5 rounded-md py-1.5 text-[11px] text-vault-muted hover:bg-vault-hover hover:text-red-400 transition-colors"
             >
               <LogOut size={11} />
-              Sortir
+              {t('nav_logout')}
             </button>
           </div>
         </div>

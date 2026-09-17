@@ -1,143 +1,52 @@
-# ─────────────────────────────────────────────
-#  VideoVault — .gitignore
-#  Placer ce fichier à la RACINE du projet
-#  (au même niveau que backend/ et frontend/)
-# ─────────────────────────────────────────────
-
-
-# ══════════════════════════════════════════════
-#  SÉCURITÉ — NE JAMAIS COMMITTER
-# ══════════════════════════════════════════════
-
-# Variables d'environnement (SECRET_KEY, DATABASE_URL, etc.)
-# C'est le fichier le plus important à ne jamais committer.
+# Sécurité
 backend/.env
 backend/.env.*
-!backend/.env.example        # ← l'exemple sans vraies valeurs EST commité
-
-# Fichiers chiffrés (vault)
-# Les .enc contiennent les données privées des utilisateurs.
+!backend/.env.example
 backend/vault/
-
-# Base de données SQLite locale
 backend/*.db
 backend/*.db-shm
 backend/*.db-wal
 *.db
-
-# Clés ou certificats éventuels
 backend/keys/
 *.pem
 *.key
 *.crt
-*.p12
 
-
-# ══════════════════════════════════════════════
-#  BACKEND PYTHON
-# ══════════════════════════════════════════════
-
-# Environnement virtuel
+# Backend Python
 backend/venv/
 backend/.venv/
 backend/env/
-
-# Cache Python
 __pycache__/
 *.py[cod]
 *.pyo
-*$py.class
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-
-# Logs
 backend/logs/
 *.log
-
-# Alembic (migrations générées localement, à adapter selon ton workflow)
-# Si tu versionnes tes migrations, commenter ces deux lignes :
-# backend/alembic/versions/
-
-# Coverage / tests
 .coverage
 htmlcov/
-.tox/
 
-
-# ══════════════════════════════════════════════
-#  FRONTEND NODE / REACT
-# ══════════════════════════════════════════════
-
-# Dépendances npm — à réinstaller avec `npm install`
+# Frontend Node
 frontend/node_modules/
-
-# Build de production — généré par `npm run build`
 frontend/dist/
 frontend/build/
-
-# Cache Vite
 frontend/.vite/
 frontend/.cache/
-
-# Variables d'environnement frontend (si tu en ajoutes)
 frontend/.env
 frontend/.env.*
 !frontend/.env.example
-
-# TypeScript build info
 frontend/tsconfig.tsbuildinfo
-frontend/*.tsbuildinfo
 
-
-# ══════════════════════════════════════════════
-#  SYSTÈME D'EXPLOITATION
-# ══════════════════════════════════════════════
-
-# Windows
-Thumbs.db
-ehthumbs.db
-Desktop.ini
-$RECYCLE.BIN/
-
-# macOS
+# OS
 .DS_Store
-.AppleDouble
-.LSOverride
-._*
+Thumbs.db
+Desktop.ini
 
-# Linux
-*~
-
-
-# ══════════════════════════════════════════════
-#  ÉDITEURS / IDEs
-# ══════════════════════════════════════════════
-
-# VS Code (les extensions et settings locaux, pas le projet)
+# IDE
 .vscode/*
-!.vscode/extensions.json    # ← extensions recommandées PEUT être commité
-!.vscode/settings.json      # ← settings partagés PEUT être commité (optionnel)
-
-# JetBrains (PyCharm, WebStorm, etc.)
+!.vscode/extensions.json
 .idea/
 *.iml
-
-# Vim / Emacs
 *.swp
 *.swo
-.#*
-\#*#
-
-
-# ══════════════════════════════════════════════
-#  DIVERS
-# ══════════════════════════════════════════════
-
-# Fichiers temporaires (déchiffrement en transit)
-backend/temp/
-
-# Archives locales
-*.zip
-*.tar.gz
-*.rar

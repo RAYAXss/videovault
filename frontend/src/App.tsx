@@ -3,10 +3,8 @@ import { useAuth } from '@/hooks/useAuth'
 import LoginPage from '@/pages/LoginPage'
 import HomePage from '@/pages/HomePage'
 
-/** Garde de route : redirige vers /login si non authentifié. */
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth()
-
   if (isLoading) {
     return (
       <div className="flex h-full items-center justify-center bg-vault-bg">
@@ -17,7 +15,6 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
       </div>
     )
   }
-
   return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />
 }
 
@@ -26,14 +23,7 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
-        <Route
-          path="/*"
-          element={
-            <ProtectedRoute>
-              <HomePage />
-            </ProtectedRoute>
-          }
-        />
+        <Route path="/*" element={<ProtectedRoute><HomePage /></ProtectedRoute>} />
       </Routes>
     </BrowserRouter>
   )

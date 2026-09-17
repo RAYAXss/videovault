@@ -15,6 +15,15 @@ export const authApi = {
   me: () => api.get<User>('/auth/me'),
 
   refresh: () => api.post('/auth/refresh'),
+
+  changePassword: (current_password: string, new_password: string) =>
+    api.post('/auth/change-password', { current_password, new_password }),
+
+  updateEmail: (email: string) =>
+    api.patch('/auth/email', { email }),
+
+  forgotPassword: (email: string) =>
+    api.post('/auth/forgot-password', { email }),
 }
 
 // ── Media ─────────────────────────────────────────────────────────────────────
@@ -30,14 +39,19 @@ export const mediaApi = {
   }) => api.get<MediaListResponse>('/media', { params }),
 
   /**
-   * Upload d'un fichier chiffré.
-   * Le mot de passe est envoyé dans un FormData (corps de requête POST HTTPS),
-   * jamais dans l'URL ou les headers visibles.
+   * Upload d'un fichier.
+   * password = null → stockage sans chiffrement (l'utilisateur a été averti).
+   * password = string → chiffrement AES-256-GCM.
    */
-  upload: (file: File, password: string, onProgress?: (pct: number) => void) => {
+  upload: (file: File, password: string | null, onProgress?: (pct: number) => void) => {
     const form = new FormData()
     form.append('file', file)
-    form.append('password', password)
+    if (password !== null) {
+      form.append('password', password)
+      form.append('encrypted', 'true')
+    } else {
+      form.append('encrypted', 'false')
+    }
     return api.post<MediaItem>('/media/upload', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
       onUploadProgress: (e) => {
@@ -49,10 +63,20 @@ export const mediaApi = {
   },
 
   /**
-   * Stream d'un fichier déchiffré.
-   * POST (et non GET) pour que le mot de passe passe dans le corps, pas dans l'URL.
-   * responseType: 'blob' → le navigateur reçoit les bytes et peut les lire
-   * avec URL.createObjectURL().
+   * Import depuis une URL externe (YouTube, Vimeo, etc.) via yt-dlp backend.
+   * password = null → pas de chiffrement.
+   */
+  importUrl: (url: string, password: string | null) => {
+    return api.post<MediaItem>('/media/import-url', {
+      url,
+      password: password ?? null,
+      encrypted: password !== null,
+    })
+  },
+
+  /**
+   * Stream / déchiffrement.
+   * Si le fichier n'est pas chiffré, password est ignoré côté backend.
    */
   stream: (mediaId: number, password: string) => {
     const form = new FormData()

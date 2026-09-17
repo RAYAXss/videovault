@@ -1,5 +1,6 @@
 import { formatBytes } from '@/utils'
 import type { MediaListResponse } from '@/types'
+import { useSettingsCtx } from '@/context/SettingsContext'
 
 interface StatsBarProps {
   data?: MediaListResponse
@@ -7,16 +8,18 @@ interface StatsBarProps {
 }
 
 export default function StatsBar({ data, loading }: StatsBarProps) {
+  const { t } = useSettingsCtx()
+
   const stats = [
     {
       value: loading ? '—' : data?.total.toString() ?? '0',
-      label: 'fichiers chiffrés',
+      label: t('stats_encrypted'),
     },
     {
       value: loading ? '—' : formatBytes(
         data?.items.reduce((acc, i) => acc + i.size_bytes, 0) ?? 0
       ),
-      label: 'dans cette vue',
+      label: t('stats_in_view'),
     },
     { value: 'AES-256', label: 'GCM · PBKDF2' },
     { value: 'httpOnly', label: 'cookies JWT' },

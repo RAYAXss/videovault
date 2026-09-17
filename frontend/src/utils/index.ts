@@ -18,9 +18,7 @@ export function formatDuration(seconds: number | null): string {
 
 export function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString('fr-FR', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
+    day: '2-digit', month: 'short', year: 'numeric',
   })
 }
 
@@ -35,17 +33,14 @@ export function getExtensionIcon(extension: string): string {
   return '🖼'
 }
 
-/** Crée un URL Blob temporaire pour lire un fichier en mémoire. */
 export function createBlobUrl(blob: Blob): string {
   return URL.createObjectURL(blob)
 }
 
-/** Révoque un URL Blob pour libérer la mémoire. */
 export function revokeBlobUrl(url: string): void {
   URL.revokeObjectURL(url)
 }
 
-/** Masque partiellement un mot de passe pour les logs de debug. Jamais en prod. */
 export function maskPassword(password: string): string {
   return password.slice(0, 2) + '•'.repeat(Math.max(0, password.length - 2))
 }

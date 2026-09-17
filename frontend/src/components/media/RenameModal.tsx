@@ -1,10 +1,11 @@
-import { useState, useEffect, useRef, FormEvent } from 'react'
+import { useState, useEffect, useRef, type FormEvent } from 'react'
 import { X, Pencil } from 'lucide-react'
 import { useQueryClient } from 'react-query'
 import toast from 'react-hot-toast'
 import clsx from 'clsx'
 import { mediaApi } from '@/api'
 import type { MediaItem } from '@/types'
+import { useSettingsCtx } from '@/context/SettingsContext'
 
 interface RenameModalProps {
   item: MediaItem
@@ -12,6 +13,7 @@ interface RenameModalProps {
 }
 
 export default function RenameModal({ item, onClose }: RenameModalProps) {
+  const { t } = useSettingsCtx()
   const [title, setTitle] = useState(item.title)
   const [loading, setLoading] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -36,10 +38,10 @@ export default function RenameModal({ item, onClose }: RenameModalProps) {
     try {
       await mediaApi.rename(item.id, trimmed)
       queryClient.invalidateQueries('media')
-      toast.success('Titre mis à jour.')
+      toast.success(t('toast_renamed'))
       onClose()
     } catch {
-      toast.error('Impossible de renommer.')
+      toast.error(t('toast_rename_err'))
       setLoading(false)
     }
   }
@@ -53,7 +55,7 @@ export default function RenameModal({ item, onClose }: RenameModalProps) {
     >
       <div className="vault-card w-full max-w-sm p-5 animate-slide-up mx-4">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-vault-text">Renommer</h2>
+          <h2 className="text-sm font-semibold text-vault-text">{t('rename_title')}</h2>
           <button onClick={onClose} className="rounded p-1 text-vault-dim hover:text-vault-text">
             <X size={15} />
           </button>
@@ -77,7 +79,7 @@ export default function RenameModal({ item, onClose }: RenameModalProps) {
               onClick={onClose}
               className="flex-1 rounded-lg border border-vault-border py-2 text-xs text-vault-muted hover:text-vault-text transition-colors"
             >
-              Annuler
+              {t('rename_cancel')}
             </button>
             <button
               type="submit"
@@ -91,7 +93,7 @@ export default function RenameModal({ item, onClose }: RenameModalProps) {
             >
               {loading
                 ? <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                : 'Renommer'
+                : t('rename_confirm')
               }
             </button>
           </div>

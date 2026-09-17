@@ -1,20 +1,16 @@
 """
 routers/auth.py — Endpoints d'authentification.
 
-Sécurité :
-  - Rate limiting via slowapi sur /login : 5 tentatives/minute par IP.
-    En complément du blocage BDD (failed_login_attempts).
-  - Les cookies sont posés par le serveur (Set-Cookie) et non par JavaScript.
-    → Le frontend ne touche jamais les tokens directement.
-  - Même message d'erreur pour "utilisateur inconnu" et "mauvais mot de passe"
-    → pas d'énumération d'utilisateurs.
-  - La vérification du mot de passe est toujours effectuée même si l'utilisateur
-    n'existe pas (dummy hash) → temps de réponse constant, pas de timing attack.
+Nouveaux endpoints :
+  POST /auth/change-password  — changer le mot de passe (authentifié)
+  PATCH /auth/email           — enregistrer/modifier l'email de récupération
+  POST /auth/forgot-password  — demander un lien de reset par email
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,13 +27,12 @@ from backend.config import settings
 
 router = APIRouter()
 
-# Hash bidon pour éviter le timing attack quand l'utilisateur n'existe pas.
 _DUMMY_HASH = hash_password("dummy_constant_password_for_timing_safety")
 
 COOKIE_OPTS = dict(
-    httponly=True,       # Inaccessible depuis JavaScript.
-    samesite="lax",      # Protège contre le CSRF (requêtes cross-site bloquées).
-    secure=not settings.DEBUG,  # HTTPS uniquement en production.
+    httponly=True,
+    samesite="lax",
+    secure=not settings.DEBUG,
     path="/",
 )
 
@@ -55,13 +50,10 @@ async def register(
     response: Response,
     db: AsyncSession = Depends(get_session),
 ) -> TokenResponse:
-    """Crée un compte utilisateur. Le premier inscrit devient admin."""
-    # Vérification unicité (case-insensitive car username est lowercasé par le validator).
     existing = await db.scalar(select(User).where(User.username == body.username))
     if existing:
         raise HTTPException(status_code=409, detail="Ce nom d'utilisateur est déjà pris.")
 
-    # Le kdf_salt est spécifique à l'utilisateur et sert à dériver les clés de ses fichiers.
     kdf_salt = generate_salt().hex()
     is_first_user = (await db.scalar(select(User))) is None
 
@@ -86,16 +78,12 @@ async def login(
     response: Response,
     db: AsyncSession = Depends(get_session),
 ) -> TokenResponse:
-    """Authentifie un utilisateur et pose les cookies JWT."""
     user = await db.scalar(select(User).where(User.username == body.username))
 
-    # Toujours vérifier un hash, même si l'utilisateur n'existe pas
-    # → temps de réponse identique, pas de timing attack.
     if user is None:
         verify_password(body.password, _DUMMY_HASH)
         raise HTTPException(status_code=401, detail="Identifiants incorrects.")
 
-    # Vérification du verrouillage de compte.
     if user.locked_until and user.locked_until > datetime.now(timezone.utc):
         raise HTTPException(
             status_code=429,
@@ -104,15 +92,12 @@ async def login(
 
     if not verify_password(body.password, user.hashed_password):
         user.failed_login_attempts += 1
-        # Verrouillage après 10 échecs : 15 minutes.
         if user.failed_login_attempts >= 10:
-            from datetime import timedelta
             user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=15)
             user.failed_login_attempts = 0
         await db.commit()
         raise HTTPException(status_code=401, detail="Identifiants incorrects.")
 
-    # Connexion réussie : reset des compteurs d'échec.
     user.failed_login_attempts = 0
     user.locked_until = None
     user.last_login = datetime.now(timezone.utc)
@@ -124,7 +109,6 @@ async def login(
 
 @router.post("/refresh")
 async def refresh_token(request: Request, response: Response) -> dict:
-    """Échange un refresh token valide contre un nouvel access token."""
     token = request.cookies.get("refresh_token")
     if not token:
         raise HTTPException(status_code=401, detail="Refresh token manquant.")
@@ -138,7 +122,6 @@ async def refresh_token(request: Request, response: Response) -> dict:
 
 @router.post("/logout")
 async def logout(response: Response) -> dict:
-    """Efface les cookies d'authentification."""
     response.delete_cookie("access_token", path="/")
     response.delete_cookie("refresh_token", path="/")
     return {"message": "Déconnecté."}
@@ -150,8 +133,84 @@ async def me(
     db: AsyncSession = Depends(get_session),
     user_id: int = Depends(get_current_user_id),
 ) -> UserResponse:
-    """Retourne le profil de l'utilisateur connecté."""
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="Utilisateur introuvable.")
     return UserResponse.model_validate(user)
+
+
+# ── New endpoints ──────────────────────────────────────────────────────────────
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=8, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class UpdateEmailRequest(BaseModel):
+    email: EmailStr | None = None
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+@router.post("/change-password")
+async def change_password(
+    body: ChangePasswordRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_session),
+    user_id: int = Depends(get_current_user_id),
+) -> dict:
+    """Change le mot de passe de l'utilisateur connecté."""
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable.")
+
+    if not verify_password(body.current_password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Mot de passe actuel incorrect.")
+
+    user.hashed_password = hash_password(body.new_password)
+    await db.commit()
+    return {"message": "Mot de passe mis à jour."}
+
+
+@router.patch("/email")
+async def update_email(
+    body: UpdateEmailRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_session),
+    user_id: int = Depends(get_current_user_id),
+) -> dict:
+    """Enregistre ou modifie l'adresse email de récupération."""
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable.")
+
+    # Store email on user (field added below)
+    user.email = body.email  # type: ignore[attr-defined]
+    await db.commit()
+    return {"message": "Email enregistré."}
+
+
+@router.post("/forgot-password")
+async def forgot_password(
+    body: ForgotPasswordRequest,
+    db: AsyncSession = Depends(get_session),
+) -> dict:
+    """
+    Envoie un email de réinitialisation si l'adresse correspond à un compte.
+
+    Toujours renvoyer la même réponse — pas d'énumération d'emails.
+    En production : intégrer un service email (SendGrid, SES, etc.).
+    """
+    user = await db.scalar(select(User).where(User.email == body.email))  # type: ignore[attr-defined]
+
+    if user:
+        # TODO: générer un token de reset, l'envoyer par email
+        # Pour l'instant : log en dev uniquement
+        if settings.DEBUG:
+            print(f"[DEV] Reset requested for user {user.username} ({body.email})")
+        # En prod : await send_reset_email(user, token)
+
+    # Toujours même réponse
+    return {"message": "Si un compte correspond à cet email, un lien de réinitialisation a été envoyé."}

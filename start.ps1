@@ -1,7 +1,7 @@
 $root = $PSScriptRoot
 $backendPath = Join-Path $root "backend"
 $frontendPath = Join-Path $root "frontend"
-$venvPath = Join-Path $backendPath "env"
+$venvPath = Join-Path $backendPath ".venv"
 $requirementsFile = Join-Path $backendPath "requirements.txt"
 
 Write-Host ""
@@ -35,7 +35,7 @@ Write-Host ""
 
 $backendProcess = Start-Process powershell -ArgumentList "-Command", @"
     Set-Location '$root'
-    & '.\backend\env\Scripts\Activate.ps1'
+    & '.\backend\.venv\Scripts\Activate.ps1'
     uvicorn backend.main:app --reload --port 8000
 "@ -PassThru
 

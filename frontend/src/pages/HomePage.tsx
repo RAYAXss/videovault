@@ -1,11 +1,10 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { useQuery } from 'react-query'
 import { Search, Upload, ArrowUpDown } from 'lucide-react'
 import toast from 'react-hot-toast'
 import clsx from 'clsx'
 
 import { mediaApi } from '@/api'
-import { createBlobUrl } from '@/utils'
 import type { MediaItem, MediaType, SortField } from '@/types'
 import { useSettingsCtx } from '@/context/SettingsContext'
 
@@ -43,6 +42,16 @@ export default function HomePage() {
   const [modal, setModal] = useState<ModalState>(null)
   const [decrypting, setDecrypting] = useState(false)
 
+  // Ref pour tracker le blob courant et le révoquer proprement
+  const currentBlobRef = useRef<string | null>(null)
+
+  const revokeCurrent = () => {
+    if (currentBlobRef.current) {
+      URL.revokeObjectURL(currentBlobRef.current)
+      currentBlobRef.current = null
+    }
+  }
+
   const { data, isLoading } = useQuery(
     ['media', { search, filterType, sortBy, descending, page }],
     () =>
@@ -57,20 +66,25 @@ export default function HomePage() {
     { keepPreviousData: true },
   )
 
+  const openPlayer = useCallback((item: MediaItem, blob: Blob) => {
+    revokeCurrent()
+    const url = URL.createObjectURL(blob)
+    currentBlobRef.current = url
+    setModal({ type: 'player', item, blobUrl: url })
+  }, [])
+
   const handlePlay = useCallback((item: MediaItem) => {
-    // If not encrypted, stream directly without password prompt
     if (!item.is_encrypted) {
       setDecrypting(true)
       mediaApi.stream(item.id, '').then(res => {
-        const blobUrl = createBlobUrl(res.data)
-        setModal({ type: 'player', item, blobUrl })
+        openPlayer(item, res.data)
       }).catch(() => {
         toast.error('Impossible de lire le fichier.')
       }).finally(() => setDecrypting(false))
     } else {
       setModal({ type: 'password', item })
     }
-  }, [])
+  }, [openPlayer])
 
   const handleDecrypt = useCallback(async (password: string) => {
     if (modal?.type !== 'password') return
@@ -78,14 +92,21 @@ export default function HomePage() {
     setDecrypting(true)
     try {
       const res = await mediaApi.stream(item.id, password)
-      const blobUrl = createBlobUrl(res.data)
-      setModal({ type: 'player', item, blobUrl })
+      openPlayer(item, res.data)
     } catch (err: any) {
       const msg = err?.response?.data?.detail ?? 'Mot de passe incorrect ou fichier corrompu.'
       toast.error(msg)
     } finally {
       setDecrypting(false)
     }
+  }, [modal, openPlayer])
+
+  const closeModal = useCallback(() => {
+    // Si on ferme le player, révoquer le blob
+    if (modal?.type === 'player') {
+      revokeCurrent()
+    }
+    setModal(null)
   }, [modal])
 
   const toggleSort = (field: SortField) => {
@@ -98,8 +119,6 @@ export default function HomePage() {
     setSearch(value)
     setPage(1)
   }
-
-  const closeModal = () => setModal(null)
 
   const recentItems = data?.items.slice(0, 6) ?? []
   const hasResults = (data?.total ?? 0) > 0
@@ -247,7 +266,11 @@ export default function HomePage() {
         />
       )}
       {modal?.type === 'player' && (
-        <PlayerModal item={modal.item} blobUrl={modal.blobUrl} onClose={closeModal} />
+        <PlayerModal
+          item={modal.item}
+          blobUrl={modal.blobUrl}
+          onClose={closeModal}
+        />
       )}
       {modal?.type === 'rename' && <RenameModal item={modal.item} onClose={closeModal} />}
       {modal?.type === 'delete' && <DeleteModal item={modal.item} onClose={closeModal} />}

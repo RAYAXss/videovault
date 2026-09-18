@@ -6,6 +6,7 @@ export interface User {
   id: number
   username: string
   is_admin: boolean
+  email?: string | null
 }
 
 export interface MediaItem {
@@ -18,6 +19,7 @@ export interface MediaItem {
   duration_seconds: number | null
   created_at: string
   updated_at: string
+  is_encrypted: boolean
 }
 
 export interface MediaListResponse {

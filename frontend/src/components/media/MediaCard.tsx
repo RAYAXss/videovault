@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Play, Eye, Trash2, Pencil } from 'lucide-react'
+import { Play, Eye, Trash2, Pencil, Lock, LockOpen } from 'lucide-react'
 import clsx from 'clsx'
 import type { MediaItem } from '@/types'
 import { formatBytes, formatDuration, getExtensionIcon } from '@/utils'
@@ -11,8 +11,6 @@ interface MediaCardProps {
   onRename: (item: MediaItem) => void
 }
 
-// Palette de fonds : variation subtile par type de média pour différencier
-// visuellement les catégories sans agresser l'œil.
 const THUMB_GRADIENTS: Record<string, string> = {
   video: 'from-[#1E1A2E] to-[#2E1E1E]',
   document: 'from-[#1A1E2E] to-[#2A1A24]',
@@ -33,7 +31,7 @@ export default function MediaCard({ item, onPlay, onDelete, onRename }: MediaCar
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      {/* Vignette */}
+      {/* Thumbnail */}
       <div
         className={clsx(
           'relative overflow-hidden rounded-lg border transition-all duration-200',
@@ -43,35 +41,41 @@ export default function MediaCard({ item, onPlay, onDelete, onRename }: MediaCar
         )}
         style={{ aspectRatio: '16/9' }}
       >
-        {/* Fond dégradé propre à chaque type */}
         <div className={clsx('absolute inset-0 bg-gradient-to-br', gradient)} />
 
-        {/* Icône centrale */}
         <div className="absolute inset-0 flex items-center justify-center">
           <span className="text-3xl opacity-20 select-none">{icon}</span>
         </div>
 
-        {/* Badge "enc" — rappel visuel que le fichier est chiffré */}
+        {/* Encryption badge */}
         <div className="absolute right-2 top-2 flex items-center gap-1 rounded border border-vault-border bg-black/60 px-1.5 py-0.5">
-          <div className="h-1.5 w-1.5 rounded-full bg-vault-success" />
-          <span className="font-mono text-[9px] text-vault-muted">enc</span>
+          {item.is_encrypted ? (
+            <>
+              <Lock size={8} className="text-vault-success" />
+              <span className="font-mono text-[9px] text-vault-success">enc</span>
+            </>
+          ) : (
+            <>
+              <LockOpen size={8} className="text-amber-400" />
+              <span className="font-mono text-[9px] text-amber-400">raw</span>
+            </>
+          )}
         </div>
 
-        {/* Badge extension */}
+        {/* Extension badge */}
         <div className="absolute bottom-2 left-2 rounded bg-black/60 px-1.5 py-0.5">
           <span className="font-mono text-[9px] uppercase text-vault-dim">
             {item.extension.replace('.', '')}
           </span>
         </div>
 
-        {/* Overlay d'actions au survol */}
+        {/* Hover overlay */}
         <div
           className={clsx(
             'absolute inset-0 flex items-center justify-center bg-black/50 transition-opacity duration-200',
             hovered ? 'opacity-100' : 'opacity-0',
           )}
         >
-          {/* Bouton principal : lire / voir */}
           <button
             onClick={() => onPlay(item)}
             className="flex h-10 w-10 items-center justify-center rounded-full bg-vault-accent shadow-lg transition-transform hover:scale-110"
@@ -80,7 +84,6 @@ export default function MediaCard({ item, onPlay, onDelete, onRename }: MediaCar
             <PlayIcon size={16} className="text-white" />
           </button>
 
-          {/* Actions secondaires */}
           <div className="absolute bottom-2 right-2 flex gap-1">
             <button
               onClick={(e) => { e.stopPropagation(); onRename(item) }}
@@ -100,7 +103,7 @@ export default function MediaCard({ item, onPlay, onDelete, onRename }: MediaCar
         </div>
       </div>
 
-      {/* Métadonnées sous la vignette */}
+      {/* Metadata */}
       <div className="mt-2 min-w-0">
         <p className="truncate text-xs font-medium text-vault-text" title={item.title}>
           {item.title}

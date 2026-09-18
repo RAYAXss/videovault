@@ -1,26 +1,13 @@
-/**
- * HomePage — Vue principale du vault.
- *
- * Orchestration :
- *   - useQuery('media') : liste paginée des fichiers via react-query.
- *   - États locaux pour les modales : un seul item actif à la fois (selectedItem).
- *   - Le mot de passe n'est jamais stocké dans un état React persistant :
- *     il vit uniquement dans PasswordModal pendant la saisie, puis est passé
- *     directement à handleDecrypt, puis disparaît.
- *   - blobUrl : URL Blob créée après déchiffrement, révoquée à la fermeture
- *     du PlayerModal (voir PlayerModal.tsx).
- */
-
 import { useState, useCallback } from 'react'
 import { useQuery } from 'react-query'
-import { Search, Upload, ArrowUpDown, SlidersHorizontal } from 'lucide-react'
+import { Search, Upload, ArrowUpDown } from 'lucide-react'
 import toast from 'react-hot-toast'
 import clsx from 'clsx'
 
 import { mediaApi } from '@/api'
-import { useAuth } from '@/hooks/useAuth'
 import { createBlobUrl } from '@/utils'
 import type { MediaItem, MediaType, SortField } from '@/types'
+import { useSettingsCtx } from '@/context/SettingsContext'
 
 import Sidebar from '@/components/layout/Sidebar'
 import MediaGrid from '@/components/media/MediaGrid'
@@ -30,6 +17,7 @@ import PlayerModal from '@/components/media/PlayerModal'
 import UploadModal from '@/components/media/UploadModal'
 import RenameModal from '@/components/media/RenameModal'
 import DeleteModal from '@/components/media/DeleteModal'
+import SettingsModal from '@/components/settings/SettingsModal'
 import StatsBar from '@/components/ui/StatsBar'
 import EmptyState from '@/components/ui/EmptyState'
 import Pagination from '@/components/ui/Pagination'
@@ -40,23 +28,21 @@ type ModalState =
   | { type: 'player'; item: MediaItem; blobUrl: string }
   | { type: 'rename'; item: MediaItem }
   | { type: 'delete'; item: MediaItem }
+  | { type: 'settings' }
   | null
 
 export default function HomePage() {
-  const { user } = useAuth()
+  const { t } = useSettingsCtx()
 
-  // ── Filtres & tri ────────────────────────────────────────────────────────
   const [search, setSearch] = useState('')
   const [filterType, setFilterType] = useState<MediaType | null>(null)
   const [sortBy, setSortBy] = useState<SortField>('created_at')
   const [descending, setDescending] = useState(true)
   const [page, setPage] = useState(1)
 
-  // ── Modale active ────────────────────────────────────────────────────────
   const [modal, setModal] = useState<ModalState>(null)
   const [decrypting, setDecrypting] = useState(false)
 
-  // ── Données ───────────────────────────────────────────────────────────────
   const { data, isLoading } = useQuery(
     ['media', { search, filterType, sortBy, descending, page }],
     () =>
@@ -71,10 +57,19 @@ export default function HomePage() {
     { keepPreviousData: true },
   )
 
-  // ── Actions ───────────────────────────────────────────────────────────────
-
   const handlePlay = useCallback((item: MediaItem) => {
-    setModal({ type: 'password', item })
+    // If not encrypted, stream directly without password prompt
+    if (!item.is_encrypted) {
+      setDecrypting(true)
+      mediaApi.stream(item.id, '').then(res => {
+        const blobUrl = createBlobUrl(res.data)
+        setModal({ type: 'player', item, blobUrl })
+      }).catch(() => {
+        toast.error('Impossible de lire le fichier.')
+      }).finally(() => setDecrypting(false))
+    } else {
+      setModal({ type: 'password', item })
+    }
   }, [])
 
   const handleDecrypt = useCallback(async (password: string) => {
@@ -109,28 +104,34 @@ export default function HomePage() {
   const recentItems = data?.items.slice(0, 6) ?? []
   const hasResults = (data?.total ?? 0) > 0
 
+  const FILTER_LABELS: Record<string, string> = {
+    video: t('nav_videos'),
+    scan: t('nav_scans'),
+    document: t('nav_documents'),
+  }
+
   return (
     <div className="flex h-screen overflow-hidden bg-vault-bg">
-      {/* Sidebar */}
-      <Sidebar activeFilter={filterType} onFilterChange={(f) => { setFilterType(f); setPage(1) }} />
+      <Sidebar
+        activeFilter={filterType}
+        onFilterChange={(f) => { setFilterType(f); setPage(1) }}
+        onOpenSettings={() => setModal({ type: 'settings' })}
+      />
 
-      {/* Contenu principal */}
       <main className="flex flex-1 flex-col overflow-hidden">
         {/* Top bar */}
         <header className="flex items-center gap-3 border-b border-vault-border bg-vault-bg px-5 py-3">
           <h1 className="text-sm font-semibold text-vault-text">
-            {filterType
-              ? { video: 'Vidéos', scan: 'Scans', document: 'Documents' }[filterType]
-              : 'Médiathèque'}
+            {filterType ? FILTER_LABELS[filterType] : t('nav_library')}
           </h1>
 
-          {/* Tri rapide */}
+          {/* Sort */}
           <div className="flex items-center gap-1">
             {(['created_at', 'title', 'size_bytes'] as SortField[]).map((field) => {
               const labels: Record<string, string> = {
-                created_at: 'Date',
-                title: 'Titre',
-                size_bytes: 'Taille',
+                created_at: t('sort_date'),
+                title: t('sort_title'),
+                size_bytes: t('sort_size'),
               }
               return (
                 <button
@@ -153,41 +154,36 @@ export default function HomePage() {
           </div>
 
           <div className="ml-auto flex items-center gap-2">
-            {/* Recherche */}
             <div className="relative">
               <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-vault-dim" />
               <input
                 type="search"
-                placeholder="Rechercher…"
+                placeholder={t('search_placeholder')}
                 value={search}
                 onChange={(e) => handleSearch(e.target.value)}
                 className="w-48 rounded-lg border border-vault-border bg-vault-surface py-1.5 pl-7 pr-3 text-xs text-vault-text placeholder:text-vault-dim focus:border-vault-accent focus:outline-none transition-colors"
               />
             </div>
-
-            {/* Bouton upload */}
             <button
               onClick={() => setModal({ type: 'upload' })}
               className="flex items-center gap-1.5 rounded-lg bg-vault-accent px-3 py-1.5 text-xs font-medium text-white hover:bg-vault-accent-hover transition-colors"
             >
               <Upload size={12} />
-              Ajouter
+              {t('btn_add')}
             </button>
           </div>
         </header>
 
         {/* Scroll area */}
         <div className="flex-1 overflow-y-auto px-5 py-4">
-          {/* Stats */}
           <StatsBar data={data} loading={isLoading} />
 
           {hasResults || isLoading ? (
             <div className="mt-5 flex flex-col gap-8">
-              {/* Section "Récemment ajoutés" (première page, pas de filtre) */}
               {!search && !filterType && page === 1 && recentItems.length > 0 && (
                 <section>
                   <div className="mb-3 flex items-center justify-between">
-                    <h2 className="text-xs font-medium text-vault-text">Récemment ajoutés</h2>
+                    <h2 className="text-xs font-medium text-vault-text">{t('section_recent')}</h2>
                   </div>
                   <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
                     {isLoading
@@ -210,13 +206,10 @@ export default function HomePage() {
                 </section>
               )}
 
-              {/* Grille principale */}
               <section>
                 {(!search && !filterType && page === 1) && (
-                  <div className="mb-3 flex items-center justify-between">
-                    <h2 className="text-xs font-medium text-vault-text">
-                      {filterType ? '' : 'Tous les fichiers'}
-                    </h2>
+                  <div className="mb-3">
+                    <h2 className="text-xs font-medium text-vault-text">{t('section_all')}</h2>
                   </div>
                 )}
                 <MediaGrid
@@ -228,7 +221,6 @@ export default function HomePage() {
                 />
               </section>
 
-              {/* Pagination */}
               <Pagination
                 page={page}
                 total={data?.total ?? 0}
@@ -244,10 +236,8 @@ export default function HomePage() {
         </div>
       </main>
 
-      {/* ── Modales ─────────────────────────────────────────────────────── */}
-      {modal?.type === 'upload' && (
-        <UploadModal onClose={closeModal} />
-      )}
+      {/* Modals */}
+      {modal?.type === 'upload' && <UploadModal onClose={closeModal} />}
       {modal?.type === 'password' && (
         <PasswordModal
           item={modal.item}
@@ -257,18 +247,11 @@ export default function HomePage() {
         />
       )}
       {modal?.type === 'player' && (
-        <PlayerModal
-          item={modal.item}
-          blobUrl={modal.blobUrl}
-          onClose={closeModal}
-        />
+        <PlayerModal item={modal.item} blobUrl={modal.blobUrl} onClose={closeModal} />
       )}
-      {modal?.type === 'rename' && (
-        <RenameModal item={modal.item} onClose={closeModal} />
-      )}
-      {modal?.type === 'delete' && (
-        <DeleteModal item={modal.item} onClose={closeModal} />
-      )}
+      {modal?.type === 'rename' && <RenameModal item={modal.item} onClose={closeModal} />}
+      {modal?.type === 'delete' && <DeleteModal item={modal.item} onClose={closeModal} />}
+      {modal?.type === 'settings' && <SettingsModal onClose={closeModal} />}
     </div>
   )
 }

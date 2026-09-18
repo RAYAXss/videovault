@@ -1,12 +1,3 @@
-/**
- * useAuth — Contexte d'authentification global.
- *
- * On utilise react-query pour /auth/me plutôt qu'un useState global :
- * - Mise en cache automatique.
- * - Re-fetch si la fenêtre reprend le focus après un long moment d'inactivité.
- * - Cohérence avec les autres appels API de l'app.
- */
-
 import { useQuery, useQueryClient } from 'react-query'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
@@ -28,7 +19,7 @@ export function useAuth() {
       }
     },
     {
-      staleTime: 5 * 60 * 1000, // 5 minutes
+      staleTime: 5 * 60 * 1000,
       retry: false,
     },
   )

@@ -1,13 +1,8 @@
 """
 models/user.py — Modèle SQLAlchemy pour les utilisateurs.
 
-Sécurité :
-  - Le mot de passe n'est JAMAIS stocké en clair : seul le hash bcrypt est persisté.
-  - kdf_salt est le sel PBKDF2 utilisé pour dériver la clé de chiffrement des fichiers
-    à partir du mot de passe. Il est unique par utilisateur, généré à l'inscription.
-    → Même si deux utilisateurs ont le même mot de passe, leurs clés dérivées diffèrent.
-  - failed_login_attempts + locked_until : protection brute-force côté BDD en plus
-    du rate limiting réseau (défense en profondeur).
+Champ email ajouté pour la récupération de compte (optionnel).
+Avertissement : l'email réduit la sécurité — documenté dans les paramètres UI.
 """
 
 from datetime import datetime
@@ -22,15 +17,16 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
-    # Hash bcrypt du mot de passe. bcrypt inclut son propre sel — pas besoin d'en ajouter.
     hashed_password: Mapped[str] = mapped_column(String(256), nullable=False)
-    # Sel PBKDF2 pour la dérivation de clé (hex 32 bytes = 64 chars).
     kdf_salt: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    # Email optionnel pour récupération de compte.
+    # N'est PAS utilisé pour l'authentification principale.
+    email: Mapped[str | None] = mapped_column(String(256), nullable=True, unique=True, index=True)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
-    # Protection brute-force côté BDD.
     failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

@@ -1,19 +1,13 @@
 """
-models/media_item.py — Modèle SQLAlchemy pour les fichiers chiffrés.
+models/media_item.py — Modèle SQLAlchemy pour les fichiers.
 
-Points de sécurité :
-  - encrypted_path stocke UNIQUEMENT le nom du fichier (ex: "abc123.enc"), pas le
-    chemin absolu. Le chemin complet est reconstruit côté serveur via VAULT_DIR.
-    → Même si la BDD est exfiltrée, l'attaquant ne sait pas où est le vault.
-  - file_iv (Initialization Vector) est stocké ici car il est nécessaire au
-    déchiffrement mais n'est pas secret en lui-même. Chaque fichier a son propre IV.
-  - owner_id lie chaque fichier à un utilisateur → contrôle d'accès au niveau données.
-    Un utilisateur ne peut accéder qu'aux fichiers dont il est propriétaire (ou admin).
+Nouveau champ is_encrypted : permet le stockage optionnel sans chiffrement.
+Quand is_encrypted=False, file_iv et file_kdf_salt sont des chaînes vides.
 """
 
 from datetime import datetime
 from enum import Enum as PyEnum
-from sqlalchemy import String, Integer, BigInteger, ForeignKey, DateTime, Enum, func
+from sqlalchemy import String, Integer, BigInteger, ForeignKey, DateTime, Enum, func, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.database import Base
@@ -30,7 +24,6 @@ class MediaItem(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
-    # Métadonnées visibles (non sensibles).
     title: Mapped[str] = mapped_column(String(256), nullable=False)
     original_filename: Mapped[str] = mapped_column(String(256), nullable=False)
     extension: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -38,15 +31,15 @@ class MediaItem(Base):
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    # Chiffrement : nom du fichier .enc dans le vault + IV Base64.
+    # Nom du fichier dans le vault (UUID.enc ou UUID.ext si non chiffré)
     encrypted_filename: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
-    # L'IV AES-GCM (12 bytes) encodé en hex — public, nécessaire au déchiffrement.
-    file_iv: Mapped[str] = mapped_column(String(32), nullable=False)
-    # Sel PBKDF2 propre à ce fichier (différent du kdf_salt utilisateur).
-    # → Même clé utilisateur, même fichier importé deux fois = IVs et sels différents.
-    file_kdf_salt: Mapped[str] = mapped_column(String(64), nullable=False)
 
-    # Appartenance.
+    # Chiffrement optionnel
+    is_encrypted: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Vide si is_encrypted=False
+    file_iv: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    file_kdf_salt: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+
     owner_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )

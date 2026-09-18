@@ -2,6 +2,46 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── CSS custom properties for theming ───────────────────────────────────── */
+:root,
+[data-theme="dark"] {
+  --color-bg:           #0D0D0F;
+  --color-surface:      #111113;
+  --color-card:         #161618;
+  --color-border:       #1E1E22;
+  --color-border-top:   #2A2A30;
+  --color-hover:        #1A1A1E;
+  --color-text:         #E8E8E8;
+  --color-muted:        #6B6B7B;
+  --color-dim:          #4A4A55;
+  --color-accent:       #C0392B;
+  --color-accent-hover: #A93226;
+  --color-accent-dim:   rgba(192, 57, 43, 0.13);
+  --color-success:      #27AE60;
+  --color-thumb:        #2E2E38;
+  --color-thumb-hover:  #3E3E48;
+  --color-selection:    rgba(192, 57, 43, 0.2);
+}
+
+[data-theme="light"] {
+  --color-bg:           #F5F5F7;
+  --color-surface:      #FFFFFF;
+  --color-card:         #FAFAFA;
+  --color-border:       #E2E2E6;
+  --color-border-top:   #D0D0D8;
+  --color-hover:        #EFEFEF;
+  --color-text:         #18181B;
+  --color-muted:        #6B6B7B;
+  --color-dim:          #9898A8;
+  --color-accent:       #C0392B;
+  --color-accent-hover: #A93226;
+  --color-accent-dim:   rgba(192, 57, 43, 0.08);
+  --color-success:      #27AE60;
+  --color-thumb:        #C8C8D0;
+  --color-thumb-hover:  #B0B0BA;
+  --color-selection:    rgba(192, 57, 43, 0.15);
+}
+
 @layer base {
   *, *::before, *::after { box-sizing: border-box; }
 
@@ -12,51 +52,60 @@
   }
 
   body {
-    background: #0D0D0F;
-    color: #E8E8E8;
+    background: var(--color-bg);
+    color: var(--color-text);
     font-family: 'Inter', system-ui, sans-serif;
     font-size: 14px;
     line-height: 1.6;
     -webkit-font-smoothing: antialiased;
+    transition: background 0.2s ease, color 0.2s ease;
   }
 
   ::-webkit-scrollbar { width: 4px; height: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: #2E2E38; border-radius: 2px; }
-  ::-webkit-scrollbar-thumb:hover { background: #3E3E48; }
+  ::-webkit-scrollbar-thumb { background: var(--color-thumb); border-radius: 2px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--color-thumb-hover); }
 
-  ::selection { background: #C0392B33; color: #E8E8E8; }
+  ::selection { background: var(--color-selection); color: var(--color-text); }
 
-  /* Focus ring accessible mais discret */
   :focus-visible {
-    outline: 2px solid #C0392B66;
+    outline: 2px solid rgba(192, 57, 43, 0.4);
     outline-offset: 2px;
     border-radius: 4px;
   }
 }
 
 @layer utilities {
-  /* Carte avec bord supérieur métallique — l'identité visuelle du vault */
+  /* Override Tailwind vault-* colors with CSS vars so they respond to theme */
+  .bg-vault-bg      { background-color: var(--color-bg) !important; }
+  .bg-vault-surface { background-color: var(--color-surface) !important; }
+  .bg-vault-card    { background-color: var(--color-card) !important; }
+  .bg-vault-hover   { background-color: var(--color-hover) !important; }
+
+  .border-vault-border { border-color: var(--color-border) !important; }
+
+  .text-vault-text  { color: var(--color-text) !important; }
+  .text-vault-muted { color: var(--color-muted) !important; }
+  .text-vault-dim   { color: var(--color-dim) !important; }
+
   .vault-card {
-    background: #161618;
-    border: 1px solid #1E1E22;
-    border-top-color: #2A2A30;
+    background: var(--color-card);
+    border: 1px solid var(--color-border);
+    border-top-color: var(--color-border-top);
     border-radius: 10px;
   }
 
-  /* Shimmer pour les skeletons */
   .shimmer {
     background: linear-gradient(
       90deg,
-      #161618 25%,
-      #1E1E22 50%,
-      #161618 75%
+      var(--color-card) 25%,
+      var(--color-border) 50%,
+      var(--color-card) 75%
     );
     background-size: 200% 100%;
     animation: shimmer 1.5s infinite;
   }
 
-  /* Troncature multi-ligne */
   .line-clamp-2 {
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -64,3 +113,21 @@
     overflow: hidden;
   }
 }
+
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in  { animation: fadeIn 0.2s ease-out; }
+.animate-slide-up { animation: slideUp 0.25s ease-out; }

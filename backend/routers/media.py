@@ -1,45 +1,36 @@
 """
-routers/media.py — Gestion des médias chiffrés.
+routers/media.py — Gestion des médias.
 
-Points de sécurité critiques :
+Nouveautés :
+  - Upload avec chiffrement optionnel (is_encrypted flag)
+  - Import depuis URL externe via yt-dlp (YouTube, Vimeo, etc.)
+  - Stream adapté : si is_encrypted=False, sert le fichier directement
 
-1. Contrôle d'accès par owner_id :
-   Chaque requête filtre par owner_id = utilisateur connecté. Même si un attaquant
-   devine un ID de fichier, il ne peut pas y accéder (il n'en est pas propriétaire).
-   Les admins ont accès à tous les fichiers (pour la gestion).
-
-2. Validation de l'extension :
-   L'extension est extraite du filename original (pas du Content-Type) et vérifiée
-   contre la whitelist ALLOWED_EXTENSIONS. Le Content-Type envoyé par le client
-   n'est pas trusté (il peut être forgé).
-
-3. Le mot de passe voyage dans le corps de la requête HTTPS (POST), jamais en URL.
-   Les URLs peuvent être loggées par les proxys ; les corps de requête, non.
-
-4. Streaming du déchiffrement :
-   StreamingResponse génère le plaintext à la volée depuis le générateur async.
-   → Le fichier en clair n'existe jamais en entier sur le disque ou en RAM serveur.
-   → Si le client coupe la connexion, le générateur s'arrête immédiatement.
-
-5. Path traversal :
-   encrypted_filename est stocké en BDD (pas fourni par le client). On ne concatène
-   jamais un input utilisateur dans un chemin de fichier.
+Sécurité URL import :
+  - L'URL est validée (schéma http/https uniquement, pas de file://)
+  - yt-dlp tourne dans un sous-processus isolé avec timeout
+  - Le fichier téléchargé est optionnellement chiffré avant stockage
+  - Le fichier temporaire est toujours supprimé après traitement
 """
 
 import asyncio
-import mimetypes
+import shutil
+import subprocess
 import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status, Query
-from fastapi.responses import StreamingResponse
-from sqlalchemy import select, func, delete
+from fastapi.responses import FileResponse, StreamingResponse
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_session
 from backend.models.media_item import MediaItem, MediaType
 from backend.models.user import User
-from backend.schemas.media import MediaListResponse, MediaResponse, RenameTitleRequest, SortField
+from backend.schemas.media import (
+    MediaListResponse, MediaResponse, RenameTitleRequest,
+    SortField, ImportUrlRequest,
+)
 from backend.services.auth import get_current_user_id
 from backend.services.crypto import (
     encrypt_file, decrypt_file_stream,
@@ -49,9 +40,11 @@ from backend.config import settings
 
 router = APIRouter()
 
+# Extensions autorisées pour l'import URL (vidéo uniquement)
+URL_IMPORT_EXTENSIONS = {".mp4", ".mkv", ".webm", ".mov", ".avi"}
+
 
 def _get_media_type(extension: str) -> MediaType:
-    """Déduit le MediaType depuis l'extension."""
     if extension in {".mp4", ".mkv", ".avi", ".mov", ".webm"}:
         return MediaType.VIDEO
     if extension in {".pdf"}:
@@ -60,7 +53,6 @@ def _get_media_type(extension: str) -> MediaType:
 
 
 def _get_mime_type(extension: str) -> str:
-    """Retourne le MIME type pour le Content-Type du streaming."""
     mime_map = {
         ".mp4": "video/mp4",
         ".mkv": "video/x-matroska",
@@ -77,6 +69,24 @@ def _get_mime_type(extension: str) -> str:
     return mime_map.get(extension, "application/octet-stream")
 
 
+def _validate_url(url: str) -> None:
+    """Valide que l'URL est http/https et non une ressource locale."""
+    import urllib.parse
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(
+            status_code=422,
+            detail="L'URL doit utiliser le protocole http ou https.",
+        )
+    if not parsed.netloc:
+        raise HTTPException(status_code=422, detail="URL invalide.")
+    # Bloquer les IPs locales / loopback
+    host = parsed.hostname or ""
+    blocked = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+    if host in blocked or host.startswith("192.168.") or host.startswith("10."):
+        raise HTTPException(status_code=422, detail="URL non autorisée.")
+
+
 @router.get("", response_model=MediaListResponse)
 async def list_media(
     request: Request,
@@ -89,31 +99,21 @@ async def list_media(
     db: AsyncSession = Depends(get_session),
     user_id: int = Depends(get_current_user_id),
 ) -> MediaListResponse:
-    """Liste les médias de l'utilisateur connecté avec pagination et tri sécurisé."""
     user = await db.get(User, user_id)
-
-    # Base query : filtre par propriétaire (sauf admin).
     stmt = select(MediaItem)
     if not user.is_admin:
         stmt = stmt.where(MediaItem.owner_id == user_id)
-
-    # Filtre par type.
     if media_type:
         stmt = stmt.where(MediaItem.media_type == media_type)
-
-    # Recherche (LIKE paramétré — pas d'interpolation).
     if search:
         stmt = stmt.where(MediaItem.title.ilike(f"%{search}%"))
 
-    # Tri : sort_by est un Enum validé par Pydantic → pas d'injection possible.
     col = getattr(MediaItem, sort_by.value)
     stmt = stmt.order_by(col.desc() if descending else col.asc())
 
-    # Total pour la pagination.
     count_stmt = select(func.count()).select_from(stmt.subquery())
     total = await db.scalar(count_stmt) or 0
 
-    # Pagination.
     stmt = stmt.offset((page - 1) * per_page).limit(per_page)
     result = await db.execute(stmt)
     items = result.scalars().all()
@@ -130,50 +130,53 @@ async def list_media(
 async def upload_media(
     request: Request,
     file: UploadFile = File(...),
-    password: str = Form(..., min_length=8),
+    password: str | None = Form(default=None),
+    encrypted: str = Form(default="true"),
     db: AsyncSession = Depends(get_session),
     user_id: int = Depends(get_current_user_id),
 ) -> MediaResponse:
-    """Chiffre et stocke un fichier dans le vault.
+    """Upload d'un fichier avec chiffrement optionnel."""
+    should_encrypt = encrypted.lower() == "true" and password is not None
 
-    Le mot de passe voyage dans le corps de la requête POST (HTTPS uniquement).
-    Il n'est jamais stocké — il sert uniquement à dériver la clé de chiffrement.
-    """
-    # Validation de l'extension depuis le nom de fichier original.
+    if should_encrypt and (not password or len(password) < 8):
+        raise HTTPException(status_code=422, detail="Mot de passe requis (min 8 caractères) pour le chiffrement.")
+
     ext = Path(file.filename or "").suffix.lower()
     if ext not in settings.ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=422,
-            detail=f"Extension non autorisée : {ext}. "
-                   f"Formats acceptés : {', '.join(sorted(settings.ALLOWED_EXTENSIONS))}",
+            detail=f"Extension non autorisée : {ext}.",
         )
 
-    # Écriture du fichier reçu dans un temp file pour pouvoir le chiffrer.
-    temp_path = settings.VAULT_DIR / f"_tmp_{uuid.uuid4().hex}{ext}"
-    encrypted_filename = f"{uuid.uuid4().hex}.enc"
-    encrypted_path = settings.VAULT_DIR / encrypted_filename
+    file_uuid = uuid.uuid4().hex
+    # Nom du fichier stocké : .enc si chiffré, extension originale sinon
+    stored_filename = f"{file_uuid}.enc" if should_encrypt else f"{file_uuid}{ext}"
+    stored_path = settings.VAULT_DIR / stored_filename
+    temp_path = settings.VAULT_DIR / f"_tmp_{file_uuid}{ext}"
 
-    file_salt = generate_salt()
-    base_iv = generate_iv()
+    file_salt = generate_salt() if should_encrypt else b""
+    base_iv = generate_iv() if should_encrypt else b""
 
     try:
-        # Lecture par chunks pour ne pas charger le fichier entier en RAM.
         with temp_path.open("wb") as tmp:
             size = 0
-            while chunk := await file.read(1024 * 1024):  # 1 Mo par chunk
-                size = size + len(chunk)
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
                 if size > settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024:
                     raise HTTPException(status_code=413, detail="Fichier trop volumineux.")
                 tmp.write(chunk)
 
-        # Chiffrement AES-256-GCM par blocs.
-        await encrypt_file(
-            source_path=temp_path,
-            dest_path=encrypted_path,
-            password=password,
-            file_salt=file_salt,
-            base_iv=base_iv,
-        )
+        if should_encrypt:
+            await encrypt_file(
+                source_path=temp_path,
+                dest_path=stored_path,
+                password=password,
+                file_salt=file_salt,
+                base_iv=base_iv,
+            )
+        else:
+            # Pas de chiffrement : copie directe
+            shutil.copy2(temp_path, stored_path)
 
         media = MediaItem(
             title=Path(file.filename or "").stem,
@@ -181,9 +184,10 @@ async def upload_media(
             extension=ext,
             media_type=_get_media_type(ext),
             size_bytes=size,
-            encrypted_filename=encrypted_filename,
-            file_iv=base_iv.hex(),
-            file_kdf_salt=file_salt.hex(),
+            encrypted_filename=stored_filename,
+            is_encrypted=should_encrypt,
+            file_iv=base_iv.hex() if should_encrypt else "",
+            file_kdf_salt=file_salt.hex() if should_encrypt else "",
             owner_id=user_id,
         )
         db.add(media)
@@ -194,54 +198,185 @@ async def upload_media(
     except HTTPException:
         raise
     except Exception as exc:
-        # Nettoyage des fichiers partiels en cas d'erreur.
-        encrypted_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=500, detail=f"Erreur lors du chiffrement : {exc}") from exc
+        stored_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"Erreur : {exc}") from exc
     finally:
-        # Le fichier temporaire en clair est TOUJOURS supprimé.
         temp_path.unlink(missing_ok=True)
+
+
+@router.post("/import-url", response_model=MediaResponse, status_code=status.HTTP_201_CREATED)
+async def import_from_url(
+    body: ImportUrlRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_session),
+    user_id: int = Depends(get_current_user_id),
+) -> MediaResponse:
+    """
+    Importe une vidéo depuis une URL externe (YouTube, Vimeo, etc.) via yt-dlp.
+
+    Sécurité :
+      - URL validée (http/https uniquement, pas d'IP locale)
+      - yt-dlp tourne en subprocess avec timeout de 10 minutes
+      - Fichier temporaire supprimé quoi qu'il arrive
+      - Chiffrement optionnel avant stockage final
+    """
+    _validate_url(body.url)
+
+    should_encrypt = body.encrypted and body.password is not None
+    if should_encrypt and (not body.password or len(body.password) < 8):
+        raise HTTPException(status_code=422, detail="Mot de passe requis (min 8 caractères).")
+
+    # Vérifier que yt-dlp est disponible
+    if not shutil.which("yt-dlp"):
+        raise HTTPException(
+            status_code=501,
+            detail="yt-dlp n'est pas installé sur le serveur. Contactez l'administrateur.",
+        )
+
+    file_uuid = uuid.uuid4().hex
+    temp_dir = settings.VAULT_DIR / f"_ytdl_{file_uuid}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    temp_output = temp_dir / "%(title)s.%(ext)s"
+
+    try:
+        # Lancer yt-dlp en subprocess (isolé, avec timeout)
+        proc = await asyncio.create_subprocess_exec(
+            "yt-dlp",
+            "--no-playlist",
+            "--format", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+            "--merge-output-format", "mp4",
+            "--output", str(temp_output),
+            "--max-filesize", f"{settings.MAX_UPLOAD_SIZE_MB}M",
+            "--no-warnings",
+            "--quiet",
+            body.url,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
+        except asyncio.TimeoutError:
+            proc.kill()
+            raise HTTPException(status_code=408, detail="Timeout : le téléchargement a pris trop longtemps.")
+
+        if proc.returncode != 0:
+            err_msg = stderr.decode(errors="replace").strip()
+            # Masquer les détails techniques en prod
+            if settings.DEBUG:
+                raise HTTPException(status_code=422, detail=f"yt-dlp error: {err_msg}")
+            raise HTTPException(status_code=422, detail="Impossible de télécharger cette URL. Vérifiez qu'elle est supportée.")
+
+        # Trouver le fichier téléchargé
+        downloaded_files = list(temp_dir.glob("*"))
+        if not downloaded_files:
+            raise HTTPException(status_code=422, detail="Aucun fichier téléchargé.")
+
+        downloaded = downloaded_files[0]
+        ext = downloaded.suffix.lower()
+        if ext not in URL_IMPORT_EXTENSIONS:
+            raise HTTPException(status_code=422, detail=f"Format non supporté : {ext}")
+
+        size = downloaded.stat().st_size
+        if size > settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Fichier trop volumineux.")
+
+        # Chiffrement ou copie directe
+        stored_filename = f"{file_uuid}.enc" if should_encrypt else f"{file_uuid}{ext}"
+        stored_path = settings.VAULT_DIR / stored_filename
+
+        file_salt = generate_salt() if should_encrypt else b""
+        base_iv = generate_iv() if should_encrypt else b""
+
+        if should_encrypt:
+            await encrypt_file(
+                source_path=downloaded,
+                dest_path=stored_path,
+                password=body.password,
+                file_salt=file_salt,
+                base_iv=base_iv,
+            )
+        else:
+            shutil.copy2(downloaded, stored_path)
+
+        # Titre = nom du fichier sans extension
+        title = downloaded.stem[:256]
+
+        media = MediaItem(
+            title=title,
+            original_filename=downloaded.name,
+            extension=ext,
+            media_type=MediaType.VIDEO,
+            size_bytes=size,
+            encrypted_filename=stored_filename,
+            is_encrypted=should_encrypt,
+            file_iv=base_iv.hex() if should_encrypt else "",
+            file_kdf_salt=file_salt.hex() if should_encrypt else "",
+            owner_id=user_id,
+        )
+        db.add(media)
+        await db.commit()
+        await db.refresh(media)
+        return MediaResponse.model_validate(media)
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Erreur d'import : {exc}") from exc
+    finally:
+        # Nettoyage du dossier temporaire (toujours)
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 @router.post("/{media_id}/stream")
 async def stream_media(
     media_id: int,
     request: Request,
-    password: str = Form(...),
+    password: str = Form(default=""),
     db: AsyncSession = Depends(get_session),
     user_id: int = Depends(get_current_user_id),
-) -> StreamingResponse:
-    """Déchiffre et streame un fichier à la volée.
+) -> StreamingResponse | FileResponse:
+    """
+    Déchiffre et streame un fichier.
 
-    POST (et non GET) pour que le mot de passe passe dans le corps, pas dans l'URL.
-    Le plaintext ne touche jamais le disque : decrypt_file_stream() est un générateur
-    async qui yield les blocs déchiffrés directement vers le client.
+    Si is_encrypted=False : sert le fichier directement (password ignoré).
+    Si is_encrypted=True  : déchiffre à la volée avec le mot de passe fourni.
     """
     user = await db.get(User, user_id)
     item = await db.get(MediaItem, media_id)
 
     if item is None or (item.owner_id != user_id and not user.is_admin):
-        # Même message pour "introuvable" et "accès refusé" → pas d'énumération.
         raise HTTPException(status_code=404, detail="Fichier introuvable.")
 
-    encrypted_path = settings.VAULT_DIR / item.encrypted_filename
-    if not encrypted_path.exists():
-        raise HTTPException(status_code=404, detail="Fichier chiffré manquant dans le vault.")
+    stored_path = settings.VAULT_DIR / item.encrypted_filename
+    if not stored_path.exists():
+        raise HTTPException(status_code=404, detail="Fichier manquant dans le vault.")
+
+    mime = _get_mime_type(item.extension)
+    headers = {
+        "Content-Disposition": f'inline; filename="{item.original_filename}"',
+        "Cache-Control": "no-store, no-cache, must-revalidate",
+        "Pragma": "no-cache",
+    }
+
+    if not item.is_encrypted:
+        # Fichier en clair : FileResponse simple
+        return FileResponse(
+            path=stored_path,
+            media_type=mime,
+            headers=headers,
+        )
+
+    # Fichier chiffré : streaming déchiffrement
+    if not password or len(password) < 8:
+        raise HTTPException(status_code=422, detail="Mot de passe requis pour déchiffrer ce fichier.")
 
     file_salt = bytes.fromhex(item.file_kdf_salt)
     base_iv = bytes.fromhex(item.file_iv)
 
     try:
-        generator = decrypt_file_stream(encrypted_path, password, file_salt, base_iv)
-        return StreamingResponse(
-            generator,
-            media_type=_get_mime_type(item.extension),
-            headers={
-                "Content-Disposition": f'inline; filename="{item.original_filename}"',
-                # Interdit la mise en cache du contenu déchiffré.
-                "Cache-Control": "no-store, no-cache, must-revalidate",
-                "Pragma": "no-cache",
-            },
-        )
+        generator = decrypt_file_stream(stored_path, password, file_salt, base_iv)
+        return StreamingResponse(generator, media_type=mime, headers=headers)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception:
@@ -256,13 +391,10 @@ async def rename_media(
     db: AsyncSession = Depends(get_session),
     user_id: int = Depends(get_current_user_id),
 ) -> MediaResponse:
-    """Renomme un fichier (titre affiché uniquement, pas le nom chiffré)."""
     user = await db.get(User, user_id)
     item = await db.get(MediaItem, media_id)
-
     if item is None or (item.owner_id != user_id and not user.is_admin):
         raise HTTPException(status_code=404, detail="Fichier introuvable.")
-
     item.title = body.title
     await db.commit()
     await db.refresh(item)
@@ -276,16 +408,11 @@ async def delete_media(
     db: AsyncSession = Depends(get_session),
     user_id: int = Depends(get_current_user_id),
 ) -> None:
-    """Supprime un fichier du vault et de la BDD."""
     user = await db.get(User, user_id)
     item = await db.get(MediaItem, media_id)
-
     if item is None or (item.owner_id != user_id and not user.is_admin):
         raise HTTPException(status_code=404, detail="Fichier introuvable.")
-
-    # Suppression du fichier chiffré (le seul existant — pas de copie en clair).
-    encrypted_path = settings.VAULT_DIR / item.encrypted_filename
-    encrypted_path.unlink(missing_ok=True)
-
+    stored_path = settings.VAULT_DIR / item.encrypted_filename
+    stored_path.unlink(missing_ok=True)
     await db.delete(item)
     await db.commit()

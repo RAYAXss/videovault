@@ -5,6 +5,7 @@ import toast from 'react-hot-toast'
 import clsx from 'clsx'
 import { mediaApi } from '@/api'
 import type { MediaItem } from '@/types'
+import { useSettingsCtx } from '@/context/SettingsContext'
 
 interface DeleteModalProps {
   item: MediaItem
@@ -12,6 +13,7 @@ interface DeleteModalProps {
 }
 
 export default function DeleteModal({ item, onClose }: DeleteModalProps) {
+  const { t } = useSettingsCtx()
   const [loading, setLoading] = useState(false)
   const queryClient = useQueryClient()
 
@@ -26,10 +28,10 @@ export default function DeleteModal({ item, onClose }: DeleteModalProps) {
     try {
       await mediaApi.delete(item.id)
       queryClient.invalidateQueries('media')
-      toast.success(`« ${item.title} » supprimé définitivement.`)
+      toast.success(`« ${item.title} » ${t('toast_deleted')}`)
       onClose()
     } catch {
-      toast.error('Impossible de supprimer le fichier.')
+      toast.error(t('toast_delete_err'))
       setLoading(false)
     }
   }
@@ -48,8 +50,8 @@ export default function DeleteModal({ item, onClose }: DeleteModalProps) {
               <AlertTriangle size={16} className="text-red-400" />
             </div>
             <div>
-              <h2 className="text-sm font-semibold text-vault-text">Supprimer définitivement</h2>
-              <p className="text-xs text-vault-muted">Cette action est irréversible.</p>
+              <h2 className="text-sm font-semibold text-vault-text">{t('delete_title')}</h2>
+              <p className="text-xs text-vault-muted">{t('delete_irreversible')}</p>
             </div>
           </div>
           <button onClick={onClose} className="rounded p-1 text-vault-dim hover:text-vault-text">
@@ -58,9 +60,9 @@ export default function DeleteModal({ item, onClose }: DeleteModalProps) {
         </div>
 
         <p className="mb-4 rounded-lg bg-vault-bg px-3 py-2 text-xs text-vault-muted">
-          Le fichier chiffré{' '}
+          {t('delete_desc')}{' '}
           <span className="font-mono text-vault-text">« {item.title} »</span>{' '}
-          sera supprimé du vault et de la base de données. Il ne pourra pas être récupéré.
+          {t('delete_desc2')}
         </p>
 
         <div className="flex gap-2">
@@ -68,7 +70,7 @@ export default function DeleteModal({ item, onClose }: DeleteModalProps) {
             onClick={onClose}
             className="flex-1 rounded-lg border border-vault-border py-2 text-xs text-vault-muted hover:text-vault-text transition-colors"
           >
-            Annuler
+            {t('delete_cancel')}
           </button>
           <button
             onClick={handleDelete}
@@ -80,7 +82,7 @@ export default function DeleteModal({ item, onClose }: DeleteModalProps) {
           >
             {loading
               ? <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-              : <><Trash2 size={12} /> Supprimer</>
+              : <><Trash2 size={12} /> {t('delete_confirm')}</>
             }
           </button>
         </div>
